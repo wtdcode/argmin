@@ -17,6 +17,7 @@ use argmin_math::{
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::time::Duration;
 
 /// Calculates pseudo-gradient of OWL-QN method.
 fn calculate_pseudo_gradient<P, G, F>(l1_coeff: F, param: &P, gradient: &G) -> G
@@ -92,6 +93,10 @@ pub struct LBFGS<L, P, G, F> {
     l1_coeff: Option<F>,
     /// Unregularized gradient used for calculation of `y`.
     l1_prev_unreg_grad: Option<G>,
+    /// Max line search iters
+    max_linsearch_iters: Option<u64>,
+    /// line search timeout
+    linsearch_timeout: Option<Duration>,
 }
 
 impl<L, P, G, F> LBFGS<L, P, G, F>
@@ -117,7 +122,19 @@ where
             tol_cost: F::epsilon(),
             l1_coeff: None,
             l1_prev_unreg_grad: None,
+            max_linsearch_iters: None,
+            linsearch_timeout: None,
         }
+    }
+
+    pub fn with_linesearch_iters(mut self, linesearch_iters: u64) -> Self {
+        self.max_linsearch_iters = Some(linesearch_iters);
+        self
+    }
+
+    pub fn with_linesearch_timeout(mut self, timeout: Duration) -> Self {
+        self.linsearch_timeout = Some(timeout);
+        self
     }
 
     /// The algorithm stops if the norm of the gradient is below `tol_grad`.
@@ -437,15 +454,24 @@ where
         self.linesearch.search_direction(d);
 
         // Run line search
-        let linesearch_result = Executor::new(line_problem, self.linesearch.clone())
+        let mut linesearch_executor = Executor::new(line_problem, self.linesearch.clone())
             .configure(|config| {
-                config
+                let mut config = config
                     .param(param.clone())
                     .gradient(prev_grad.clone())
-                    .cost(cur_cost)
+                    .cost(cur_cost);
+                if let Some(ls) = self.max_linsearch_iters {
+                    config = config.max_iters(ls);
+                }
+                config
             })
-            .ctrlc(false)
-            .run();
+            .ctrlc(false);
+
+        if let Some(tm) = self.linsearch_timeout {
+            linesearch_executor = linesearch_executor.timeout(tm);
+        }
+
+        let linesearch_result = linesearch_executor.run();
 
         let OptimizationResult {
             problem: mut line_problem,
@@ -481,7 +507,18 @@ where
             self.y.pop_front();
         }
 
-        let grad = problem.gradient(&xk1)?;
+        let grad = match problem.gradient(&xk1) {
+            Ok(grad) => grad,
+            Err(e) => {
+                if let Some(crate::core::ArgminError::ProblemExiting { text: _ }) =
+                    e.downcast_ref::<crate::core::ArgminError>()
+                {
+                    return Ok((state.terminate_with(TerminationReason::Timeout), None));
+                } else {
+                    return Err(e);
+                }
+            }
+        };
 
         self.s.push_back(xk1.sub(&param));
         let grad = if let Some(l1_coeff) = self.l1_coeff {
@@ -542,6 +579,8 @@ mod tests {
             y,
             l1_coeff,
             l1_prev_unreg_grad,
+            max_linsearch_iters,
+            linsearch_timeout,
         } = lbfgs;
 
         assert_eq!(linesearch, MyFakeLineSearch {});
