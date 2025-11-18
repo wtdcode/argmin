@@ -507,18 +507,7 @@ where
             self.y.pop_front();
         }
 
-        let grad = match problem.gradient(&xk1) {
-            Ok(grad) => grad,
-            Err(e) => {
-                if let Some(crate::core::ArgminError::ProblemExiting { text: _ }) =
-                    e.downcast_ref::<crate::core::ArgminError>()
-                {
-                    return Ok((state.terminate_with(TerminationReason::Timeout), None));
-                } else {
-                    return Err(e);
-                }
-            }
-        };
+        let grad = problem.gradient(&xk1)?;
 
         self.s.push_back(xk1.sub(&param));
         let grad = if let Some(l1_coeff) = self.l1_coeff {

@@ -61,13 +61,6 @@ pub enum ArgminError {
         /// Text
         text: String,
     },
-
-    /// Problem asks for exiting
-    #[error("Promblem asks for exiting: {text:?}")]
-    ProblemExiting {
-        /// Test
-        text: String,
-    },
 }
 
 #[cfg(test)]
