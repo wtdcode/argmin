@@ -489,7 +489,16 @@ where
             }
         };
 
-        let mut xk1 = linesearch_state.take_param().unwrap();
+        let mut xk1 = if let Some(xk1) = linesearch_state.take_param() {
+            xk1
+        } else {
+            return Ok((
+                state.terminate_with(TerminationReason::SolverExit(format!(
+                    "Line search terminated without param",
+                ))),
+                None,
+            ));
+        };
         let next_cost = linesearch_state.get_cost();
 
         // take back problem and take care of function evaluation counts
